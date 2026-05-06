@@ -31,7 +31,7 @@ namespace hpfrec
             cv::Mat featureVector;
         };
 
-        static int SelectComponentCount(const cv::Mat &eigenValuesRow);
+        static int SelectComponentCount(const std::vector<float> &eigenValues);
         cv::Mat ProjectVector(const cv::Mat &vector) const;
         void BuildPersonCentroids();
         void BuildRejectionThreshold();

@@ -102,7 +102,7 @@ namespace hpfrec
 
     void MainFrame::ShowPreview(const std::string &path)
     {
-        cv::Mat image = cv::imread(path, cv::IMREAD_COLOR);
+        cv::Mat image = LoadPreviewImage(path);
         if (image.empty())
         {
             preview->SetBitmap(MatToBitmap(cv::Mat()));

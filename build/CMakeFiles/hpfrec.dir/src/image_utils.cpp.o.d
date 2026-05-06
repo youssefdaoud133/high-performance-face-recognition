@@ -417,4 +417,7 @@ CMakeFiles/hpfrec.dir/src/image_utils.cpp.o: \
  /usr/include/wx-3.2/wx/imagjpeg.h /usr/include/wx-3.2/wx/imagtga.h \
  /usr/include/wx-3.2/wx/imagtiff.h /usr/include/wx-3.2/wx/imagpnm.h \
  /usr/include/wx-3.2/wx/imagxpm.h /usr/include/wx-3.2/wx/imagiff.h \
- /usr/include/wx-3.2/wx/gtk/bitmap.h
+ /usr/include/wx-3.2/wx/gtk/bitmap.h /usr/include/c++/13/filesystem \
+ /usr/include/c++/13/bits/fs_fwd.h /usr/include/c++/13/bits/fs_path.h \
+ /usr/include/c++/13/codecvt /usr/include/c++/13/bits/fs_dir.h \
+ /usr/include/c++/13/bits/fs_ops.h

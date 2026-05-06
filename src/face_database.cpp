@@ -15,11 +15,198 @@ namespace hpfrec
     namespace
     {
         constexpr float kVarianceKeepRatio = 0.90f;
+        constexpr int kPowerIterationMaxSteps = 128;
+        constexpr float kPowerIterationTolerance = 1e-4f;
+        constexpr float kLinearAlgebraEpsilon = 1e-8f;
 
         float L2Distance(const cv::Mat &a, const cv::Mat &b)
         {
             cv::Mat diff = a - b;
             return static_cast<float>(cv::norm(diff, cv::NORM_L2));
+        }
+
+        cv::Mat BuildMeanVector(const cv::Mat &dataMatrix)
+        {
+            cv::Mat mean = cv::Mat::zeros(dataMatrix.rows, 1, CV_32F);
+            const int imageCount = dataMatrix.cols;
+
+            for (int row = 0; row < dataMatrix.rows; ++row)
+            {
+                float sum = 0.0f;
+                for (int column = 0; column < imageCount; ++column)
+                {
+                    sum += dataMatrix.at<float>(row, column);
+                }
+                mean.at<float>(row, 0) = sum / static_cast<float>(imageCount);
+            }
+
+            return mean;
+        }
+
+        cv::Mat BuildCenteredMatrix(const cv::Mat &dataMatrix, const cv::Mat &meanVector)
+        {
+            cv::Mat centered = cv::Mat::zeros(dataMatrix.rows, dataMatrix.cols, CV_32F);
+            for (int row = 0; row < dataMatrix.rows; ++row)
+            {
+                const float meanValue = meanVector.at<float>(row, 0);
+                for (int column = 0; column < dataMatrix.cols; ++column)
+                {
+                    centered.at<float>(row, column) = dataMatrix.at<float>(row, column) - meanValue;
+                }
+            }
+            return centered;
+        }
+
+        cv::Mat BuildCovarianceMatrix(const cv::Mat &centered)
+        {
+            const int imageCount = centered.cols;
+            cv::Mat covariance = cv::Mat::zeros(imageCount, imageCount, CV_32F);
+            const float scale = 1.0f / static_cast<float>(std::max(1, imageCount - 1));
+
+            for (int i = 0; i < imageCount; ++i)
+            {
+                for (int j = i; j < imageCount; ++j)
+                {
+                    float sum = 0.0f;
+                    for (int row = 0; row < centered.rows; ++row)
+                    {
+                        sum += centered.at<float>(row, i) * centered.at<float>(row, j);
+                    }
+
+                    const float value = sum * scale;
+                    covariance.at<float>(i, j) = value;
+                    covariance.at<float>(j, i) = value;
+                }
+            }
+
+            return covariance;
+        }
+
+        std::vector<float> MultiplyMatrixVector(const cv::Mat &matrix, const std::vector<float> &vector)
+        {
+            std::vector<float> result(matrix.rows, 0.0f);
+            for (int row = 0; row < matrix.rows; ++row)
+            {
+                float sum = 0.0f;
+                for (int column = 0; column < matrix.cols; ++column)
+                {
+                    sum += matrix.at<float>(row, column) * vector[column];
+                }
+                result[row] = sum;
+            }
+            return result;
+        }
+
+        cv::Mat MultiplyMatrixVectorAsColumn(const cv::Mat &matrix, const std::vector<float> &vector)
+        {
+            cv::Mat result = cv::Mat::zeros(matrix.rows, 1, CV_32F);
+            for (int row = 0; row < matrix.rows; ++row)
+            {
+                float sum = 0.0f;
+                for (int column = 0; column < matrix.cols; ++column)
+                {
+                    sum += matrix.at<float>(row, column) * vector[column];
+                }
+                result.at<float>(row, 0) = sum;
+            }
+            return result;
+        }
+
+        float VectorNorm(const std::vector<float> &vector)
+        {
+            float sum = 0.0f;
+            for (float value : vector)
+            {
+                sum += value * value;
+            }
+            return std::sqrt(sum);
+        }
+
+        float VectorDifferenceNorm(const std::vector<float> &left, const std::vector<float> &right)
+        {
+            float sum = 0.0f;
+            for (std::size_t index = 0; index < left.size(); ++index)
+            {
+                const float delta = left[index] - right[index];
+                sum += delta * delta;
+            }
+            return std::sqrt(sum);
+        }
+
+        void NormalizeVector(std::vector<float> &vector)
+        {
+            const float norm = VectorNorm(vector);
+            if (norm <= kLinearAlgebraEpsilon)
+            {
+                return;
+            }
+
+            for (float &value : vector)
+            {
+                value /= norm;
+            }
+        }
+
+        float RayleighQuotient(const cv::Mat &matrix, const std::vector<float> &vector)
+        {
+            const std::vector<float> multiplied = MultiplyMatrixVector(matrix, vector);
+            float result = 0.0f;
+            for (std::size_t index = 0; index < vector.size(); ++index)
+            {
+                result += vector[index] * multiplied[index];
+            }
+            return result;
+        }
+
+        void DeflateMatrix(cv::Mat &matrix, float eigenValue, const std::vector<float> &eigenVector)
+        {
+            for (int row = 0; row < matrix.rows; ++row)
+            {
+                for (int column = 0; column < matrix.cols; ++column)
+                {
+                    matrix.at<float>(row, column) -= eigenValue * eigenVector[row] * eigenVector[column];
+                }
+            }
+        }
+
+        std::vector<float> PowerIteration(const cv::Mat &matrix, std::vector<float> seed)
+        {
+            NormalizeVector(seed);
+            if (VectorNorm(seed) <= kLinearAlgebraEpsilon)
+            {
+                seed.assign(matrix.cols, 0.0f);
+                if (!seed.empty())
+                {
+                    seed[0] = 1.0f;
+                }
+            }
+
+            std::vector<float> vector = seed;
+            for (int iteration = 0; iteration < kPowerIterationMaxSteps; ++iteration)
+            {
+                std::vector<float> next = MultiplyMatrixVector(matrix, vector);
+                const float nextNorm = VectorNorm(next);
+                if (nextNorm <= kLinearAlgebraEpsilon)
+                {
+                    break;
+                }
+
+                for (float &value : next)
+                {
+                    value /= nextNorm;
+                }
+
+                if (VectorDifferenceNorm(next, vector) <= kPowerIterationTolerance)
+                {
+                    vector = next;
+                    break;
+                }
+
+                vector = next;
+            }
+
+            NormalizeVector(vector);
+            return vector;
         }
     }
 
@@ -89,25 +276,43 @@ namespace hpfrec
             trainingSamples[columnIndex].imageVector.copyTo(dataMatrix.col(columnIndex));
         }
 
-        cv::reduce(dataMatrix, meanVector, 1, cv::REDUCE_AVG);
+        meanVector = BuildMeanVector(dataMatrix);
+        cv::Mat centered = BuildCenteredMatrix(dataMatrix, meanVector);
+        cv::Mat covarianceMatrix = BuildCovarianceMatrix(centered);
 
-        cv::Mat centered = dataMatrix.clone();
-        for (int columnIndex = 0; columnIndex < imageCount; ++columnIndex)
+        std::vector<float> eigenValues;
+        std::vector<std::vector<float>> eigenVectors;
+        eigenValues.reserve(imageCount);
+        eigenVectors.reserve(imageCount);
+
+        cv::Mat workingCovariance = covarianceMatrix.clone();
+        for (int componentIndex = 0; componentIndex < imageCount; ++componentIndex)
         {
-            centered.col(columnIndex) -= meanVector;
+            std::vector<float> seed(imageCount, 0.0f);
+            seed[componentIndex % imageCount] = 1.0f;
+
+            std::vector<float> eigenVector = PowerIteration(workingCovariance, seed);
+            if (VectorNorm(eigenVector) <= kLinearAlgebraEpsilon)
+            {
+                continue;
+            }
+
+            float eigenValue = RayleighQuotient(covarianceMatrix, eigenVector);
+            if (eigenValue <= kLinearAlgebraEpsilon)
+            {
+                continue;
+            }
+
+            eigenValues.push_back(eigenValue);
+            eigenVectors.push_back(std::move(eigenVector));
+            DeflateMatrix(workingCovariance, eigenValue, eigenVectors.back());
         }
 
-        cv::Mat covarianceMatrix = (centered.t() * centered) / static_cast<float>(std::max(1, imageCount - 1));
-        cv::Mat eigenValuesRow;
-        cv::Mat eigenVectorsRow;
-        if (!cv::eigen(covarianceMatrix, eigenValuesRow, eigenVectorsRow))
+        if (eigenValues.empty())
         {
-            error = "Unable to solve eigenvectors for the training data.";
+            error = "Unable to derive principal components from the training data.";
             return false;
         }
-
-        cv::Mat eigenValues;
-        eigenValuesRow.convertTo(eigenValues, CV_32F);
 
         const int componentCount = SelectComponentCount(eigenValues);
         if (componentCount <= 0)
@@ -123,28 +328,29 @@ namespace hpfrec
 
         for (int index = 0; index < componentCount; ++index)
         {
-            float eigenValue = 0.0f;
-            if (eigenValues.rows == 1)
+            if (index >= static_cast<int>(eigenValues.size()))
             {
-                eigenValue = eigenValues.at<float>(0, index);
-            }
-            else
-            {
-                eigenValue = eigenValues.at<float>(index, 0);
+                break;
             }
 
+            const float eigenValue = eigenValues[index];
             if (eigenValue <= std::numeric_limits<float>::epsilon())
             {
                 continue;
             }
 
-            cv::Mat sampleSpaceVector64 = eigenVectorsRow.row(index).t();
-            cv::Mat sampleSpaceVector;
-            sampleSpaceVector64.convertTo(sampleSpaceVector, CV_32F);
+            cv::Mat faceSpaceVector = MultiplyMatrixVectorAsColumn(centered, eigenVectors[index]);
+            const float scale = static_cast<float>(std::sqrt(static_cast<double>(eigenValue)));
+            if (scale > std::numeric_limits<float>::epsilon())
+            {
+                faceSpaceVector /= scale;
+            }
 
-            cv::Mat faceSpaceVector = centered * sampleSpaceVector;
-            faceSpaceVector /= static_cast<float>(std::sqrt(static_cast<double>(eigenValue)));
-            cv::normalize(faceSpaceVector, faceSpaceVector);
+            const float faceNorm = static_cast<float>(cv::norm(faceSpaceVector, cv::NORM_L2));
+            if (faceNorm > std::numeric_limits<float>::epsilon())
+            {
+                faceSpaceVector /= faceNorm;
+            }
 
             principalEigenVectors.push_back(faceSpaceVector);
             principalEigenValues.push_back(eigenValue);
@@ -244,9 +450,9 @@ namespace hpfrec
         return stream.str();
     }
 
-    int FaceDatabase::SelectComponentCount(const cv::Mat &eigenValuesRow)
+    int FaceDatabase::SelectComponentCount(const std::vector<float> &eigenValues)
     {
-        const int totalComponents = static_cast<int>(eigenValuesRow.total());
+        const int totalComponents = static_cast<int>(eigenValues.size());
         if (totalComponents == 0)
         {
             return 0;
@@ -255,7 +461,7 @@ namespace hpfrec
         double totalVariance = 0.0;
         for (int i = 0; i < totalComponents; ++i)
         {
-            totalVariance += eigenValuesRow.at<float>(0, i);
+            totalVariance += eigenValues[i];
         }
 
         if (totalVariance <= std::numeric_limits<double>::epsilon())
@@ -266,7 +472,7 @@ namespace hpfrec
         double cumulativeVariance = 0.0;
         for (int i = 0; i < totalComponents; ++i)
         {
-            cumulativeVariance += eigenValuesRow.at<float>(0, i);
+            cumulativeVariance += eigenValues[i];
             if ((cumulativeVariance / totalVariance) >= kVarianceKeepRatio)
             {
                 return i + 1;

@@ -11,6 +11,7 @@ namespace hpfrec
     constexpr int kTrainingHeight = 100;
 
     cv::Mat LoadPreparedImage(const std::string &path);
+    cv::Mat LoadPreviewImage(const std::string &path);
     cv::Mat FlattenImage(const cv::Mat &image);
     wxBitmap MatToBitmap(const cv::Mat &input);
 }
